@@ -17,23 +17,24 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::PAGE_SIZE;
+use crate::fs::{open_file, OpenFlags};
+use crate::mm::MapPermission;
+use crate::mm::VirtAddr;
+pub use crate::syscall::process::TaskInfo;
+use crate::timer::get_time_us;
 use alloc::sync::Arc;
 use lazy_static::*;
 use manager::fetch_task;
 use switch::__switch;
-use crate::mm::VirtAddr;
-use crate::mm::MapPermission;
-use crate::config::PAGE_SIZE;
-use crate::timer::get_time_us;
-pub use crate::syscall::process::TaskInfo;
-use crate::fs::{open_file, OpenFlags};
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
 pub use manager::add_task;
 pub use pid::{pid_alloc, KernelStack, PidHandle};
 pub use processor::{
-    current_task, current_trap_cx, current_user_token, run_tasks, schedule, take_current_task,
+    current_task, current_trap_cx, current_user_token, get_cur_start_time, get_cur_syscall,
+    increase_cur_syscall, mmap, munmap, run_tasks, schedule, take_current_task,
 };
 
 /// Make current task suspended and switch to the next task

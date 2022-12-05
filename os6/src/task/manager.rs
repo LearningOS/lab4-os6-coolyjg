@@ -3,7 +3,6 @@
 //! It is only used to manage processes and schedule process based on ready queue.
 //! Other CPU process monitoring functions are in Processor.
 
-
 use super::TaskControlBlock;
 use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
@@ -29,6 +28,19 @@ impl TaskManager {
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
         self.ready_queue.pop_front()
+    }
+
+    pub fn fetch_stride(&mut self) -> Option<Arc<TaskControlBlock>> {
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+        let (idx, _) = self
+            .ready_queue
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, t)| t.get_stride())
+            .unwrap();
+        self.ready_queue.remove(idx)
     }
 }
 

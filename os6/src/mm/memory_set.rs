@@ -4,7 +4,7 @@ use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
-use crate::config::{MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE, MMIO};
+use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -29,6 +29,36 @@ lazy_static! {
     /// a memory set instance through lazy_static! managing kernel space
     pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
+}
+
+impl MemorySet {
+    pub fn check_mapped(&self, vpn: VirtPageNum) -> bool {
+        for area in self.areas.iter() {
+            if area.check_mapped(vpn) {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn check_unmapped(&self, vpn: VirtPageNum) -> bool {
+        for area in self.areas.iter() {
+            if area.check_mapped(vpn) {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn remove_vpn(&mut self, vpn: VirtPageNum) {
+        for i in 0..self.areas.len() {
+            if self.areas[i].check_mapped(vpn) {
+                self.areas[i].unmap(&mut self.page_table);
+                self.areas.remove(i);
+                return;
+            }
+        }
+    }
 }
 
 /// Get the token of the kernel memory space
@@ -162,7 +192,8 @@ impl MemorySet {
                     MapType::Identical,
                     MapPermission::R | MapPermission::W,
                 ),
-            None);
+                None,
+            );
         }
         memory_set
     }
@@ -276,6 +307,12 @@ pub struct MapArea {
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,
+}
+
+impl MapArea {
+    pub fn check_mapped(&self, vpn: VirtPageNum) -> bool {
+        self.vpn_range.get_start().0 <= vpn.0 && self.vpn_range.get_end().0 > vpn.0
+    }
 }
 
 impl MapArea {

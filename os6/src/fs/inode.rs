@@ -1,16 +1,12 @@
-use easy_fs::{
-    EasyFileSystem,
-    Inode,
-};
+use super::File;
 use crate::drivers::BLOCK_DEVICE;
+use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
-use lazy_static::*;
-use bitflags::*;
 use alloc::vec::Vec;
-use super::File;
-use crate::mm::UserBuffer;
-
+use bitflags::*;
+use easy_fs::{EasyFileSystem, Inode, DirEntry};
+use lazy_static::*;
 /// A wrapper around a filesystem inode
 /// to implement File trait atop
 pub struct OSInode {
@@ -27,18 +23,11 @@ pub struct OSInodeInner {
 
 impl OSInode {
     /// Construct an OS inode from a inode
-    pub fn new(
-        readable: bool,
-        writable: bool,
-        inode: Arc<Inode>,
-    ) -> Self {
+    pub fn new(readable: bool, writable: bool, inode: Arc<Inode>) -> Self {
         Self {
             readable,
             writable,
-            inner: unsafe { UPSafeCell::new(OSInodeInner {
-                offset: 0,
-                inode,
-            })},
+            inner: unsafe { UPSafeCell::new(OSInodeInner { offset: 0, inode }) },
         }
     }
     /// Read all data inside a inode into vector
@@ -108,40 +97,30 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
         if let Some(inode) = ROOT_INODE.find(name) {
             // clear size
             inode.clear();
-            Some(Arc::new(OSInode::new(
-                readable,
-                writable,
-                inode,
-            )))
+            Some(Arc::new(OSInode::new(readable, writable, inode)))
         } else {
             // create file
-            ROOT_INODE.create(name)
-                .map(|inode| {
-                    Arc::new(OSInode::new(
-                        readable,
-                        writable,
-                        inode,
-                    ))
-                })
+            ROOT_INODE
+                .create(name)
+                .map(|inode| Arc::new(OSInode::new(readable, writable, inode)))
         }
     } else {
-        ROOT_INODE.find(name)
-            .map(|inode| {
-                if flags.contains(OpenFlags::TRUNC) {
-                    inode.clear();
-                }
-                Arc::new(OSInode::new(
-                    readable,
-                    writable,
-                    inode
-                ))
-            })
+        ROOT_INODE.find(name).map(|inode| {
+            if flags.contains(OpenFlags::TRUNC) {
+                inode.clear();
+            }
+            Arc::new(OSInode::new(readable, writable, inode))
+        })
     }
 }
 
 impl File for OSInode {
-    fn readable(&self) -> bool { self.readable }
-    fn writable(&self) -> bool { self.writable }
+    fn readable(&self) -> bool {
+        self.readable
+    }
+    fn writable(&self) -> bool {
+        self.writable
+    }
     fn read(&self, mut buf: UserBuffer) -> usize {
         let mut inner = self.inner.exclusive_access();
         let mut total_read_size = 0usize;
@@ -167,3 +146,18 @@ impl File for OSInode {
         total_write_size
     }
 }
+
+pub fn linkat(old_name: &str, new_name: &str) -> isize{
+    let old_id = ROOT_INODE.get_ino(old_name).unwrap();
+    let new_id = old_id;
+    let new_entry = DirEntry::new(new_name, new_id);
+    ROOT_INODE.append_dir(new_entry);
+    0
+}
+
+pub fn unlinkat(name: &str) -> isize{
+    ROOT_INODE.remove_dir(name);
+    0
+}
+
+pub fn stat()

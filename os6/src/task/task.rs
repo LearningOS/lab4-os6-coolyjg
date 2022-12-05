@@ -1,17 +1,18 @@
 //! Types related to task management & Functions for completely changing TCB
 
-use super::TaskContext;
+use super::{current_task, TaskContext};
 use super::{pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT;
-use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
+use crate::config::{BIG_STRIDE, MAX_SYSCALL_NUM, TRAP_CONTEXT};
+use crate::fs::{File, Stdin, Stdout};
+use crate::mm::translated_refmut;
+use crate::mm::{translated_str, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
+use crate::task::{add_task, current_user_token};
 use crate::trap::{trap_handler, TrapContext};
+use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
-use crate::fs::{File, Stdin, Stdout};
-use alloc::string::String;
-use crate::mm::translated_refmut;
 
 /// Task control block structure
 ///
@@ -49,6 +50,16 @@ pub struct TaskControlBlockInner {
     pub children: Vec<Arc<TaskControlBlock>>,
     /// It is set when active exit or execution error occurs
     pub exit_code: i32,
+    // first schedule time
+    pub task_start_time: usize,
+    // syscall count array
+    pub task_syscall_times: Vec<u32>,
+    // priority
+    pub prio: isize,
+    // stride value
+    pub stride: usize,
+    // pass value
+    pub pass: usize,
     pub fd_table: Vec<Option<Arc<dyn File + Send + Sync>>>,
 }
 
@@ -71,9 +82,24 @@ impl TaskControlBlockInner {
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
     }
+    pub fn increase_syscall_times(&mut self, id: usize) {
+        self.task_syscall_times[id] += 1;
+    }
+
+    pub fn get_start_time(&self) -> usize {
+        self.task_start_time
+    }
+
+    pub fn get_syscall_times(&self) -> Vec<u32> {
+        self.task_syscall_times.clone()
+    }
+
+    pub fn set_prio(&mut self, prio: isize) {
+        self.prio = prio;
+        self.pass = BIG_STRIDE / prio as usize;
+    }
     pub fn alloc_fd(&mut self) -> usize {
-        if let Some(fd) = (0..self.fd_table.len())
-            .find(|fd| self.fd_table[*fd].is_none()) {
+        if let Some(fd) = (0..self.fd_table.len()).find(|fd| self.fd_table[*fd].is_none()) {
             fd
         } else {
             self.fd_table.push(None);
@@ -86,6 +112,10 @@ impl TaskControlBlock {
     /// Get the mutex to get the RefMut TaskControlBlockInner
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskControlBlockInner> {
         self.inner.exclusive_access()
+    }
+
+    pub fn get_stride(&self) -> usize {
+        self.inner.exclusive_access().stride
     }
 
     /// Create a new process
@@ -116,6 +146,11 @@ impl TaskControlBlock {
                     parent: None,
                     children: Vec::new(),
                     exit_code: 0,
+                    task_start_time: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM].to_vec(),
+                    prio: 16,
+                    stride: 0,
+                    pass: BIG_STRIDE / 16,
                     fd_table: alloc::vec![
                         // 0 -> stdin
                         Some(Arc::new(Stdin)),
@@ -199,6 +234,11 @@ impl TaskControlBlock {
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
                     exit_code: 0,
+                    task_start_time: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM].to_vec(),
+                    prio: 16,
+                    stride: 0,
+                    pass: BIG_STRIDE / 16,
                     fd_table: new_fd_table,
                 })
             },
@@ -214,6 +254,29 @@ impl TaskControlBlock {
         // ---- release parent PCB automatically
         // **** release children PCB automatically
     }
+
+    pub fn spawn(self: &Arc<TaskControlBlock>, elf_data: &[u8]) -> Option<Arc<TaskControlBlock>> {
+        let new_task = TaskControlBlock::new(elf_data);
+        let mut parent_inner = self.inner_exclusive_access();
+        let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        // clone all fds from parent to child
+        for fd in parent_inner.fd_table.iter() {
+            if let Some(file) = fd {
+                new_fd_table.push(Some(file.clone()));
+            } else {
+                new_fd_table.push(None);
+            }
+        }
+        let mut new_task_inner = new_task.inner_exclusive_access();
+        new_task_inner.fd_table = new_fd_table;
+        new_task_inner.parent = Some(Arc::downgrade(self));
+        drop(new_task_inner);
+        let tcb = Arc::new(new_task);
+        parent_inner.children.push(tcb.clone());
+        add_task(tcb.clone());
+        Some(tcb)
+    }
+
     pub fn getpid(&self) -> usize {
         self.pid.0
     }

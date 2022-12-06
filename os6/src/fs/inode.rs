@@ -1,11 +1,12 @@
-use super::File;
+use super::{File, Stat, StatMode};
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
 use alloc::sync::Arc;
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use bitflags::*;
-use easy_fs::{EasyFileSystem, Inode, DirEntry};
+use easy_fs::{DirEntry, DiskInodeType, EasyFileSystem, Inode};
 use lazy_static::*;
 /// A wrapper around a filesystem inode
 /// to implement File trait atop
@@ -145,9 +146,20 @@ impl File for OSInode {
         }
         total_write_size
     }
+    fn stat(&self) -> Stat {
+        let dev = 0;
+        let inner = self.inner.exclusive_access();
+        let ino = inner.inode.get_ino_from_pos();
+        let mode = match inner.inode.get_mode() {
+            DiskInodeType::Directory => StatMode::DIR,
+            DiskInodeType::File => StatMode::FILE,
+        };
+        let nlink = ROOT_INODE.check_nlinks(ino as u32);
+        Stat::new(dev, ino, mode, nlink)
+    }
 }
 
-pub fn linkat(old_name: &str, new_name: &str) -> isize{
+pub fn linkat(old_name: &str, new_name: &str) -> isize {
     let old_id = ROOT_INODE.get_ino(old_name).unwrap();
     let new_id = old_id;
     let new_entry = DirEntry::new(new_name, new_id);
@@ -155,9 +167,12 @@ pub fn linkat(old_name: &str, new_name: &str) -> isize{
     0
 }
 
-pub fn unlinkat(name: &str) -> isize{
+pub fn unlinkat(name: &str) -> isize {
+    let inode = ROOT_INODE.find(name).unwrap();
+    let n = inode.get_ino_from_pos();
+    if ROOT_INODE.check_nlinks(n as u32) == 1{
+        inode.clear();
+    }
     ROOT_INODE.remove_dir(name);
     0
 }
-
-pub fn stat()

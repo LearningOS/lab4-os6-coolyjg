@@ -120,7 +120,7 @@ impl EasyFileSystem {
             (inode_id % inodes_per_block) as usize * inode_size,
         )
     }
-    pub fn get_inode_start_block(&self) -> u32{
+    pub fn get_inode_start_block(&self) -> u32 {
         self.inode_area_start_block
     }
 

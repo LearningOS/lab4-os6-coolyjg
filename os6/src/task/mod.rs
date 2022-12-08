@@ -68,6 +68,13 @@ pub fn exit_current_and_run_next(exit_code: i32) {
     inner.exit_code = exit_code;
     // do not move to its parent but under initproc
 
+    // if init process, just quit
+    let pid = task.getpid();
+    if pid == 0{
+        // let mut _unused = TaskContext::zero_init();
+        // schedule(&mut _unused as *mut _);
+        return ;
+    }
     // ++++++ access initproc TCB exclusively
     {
         let mut initproc_inner = INITPROC.inner_exclusive_access();
